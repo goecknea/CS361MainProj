@@ -199,12 +199,13 @@ def main():
                     if mins == 0:
                         G_TIMER = "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
                     else:
-                        G_TIMER = "{mins:02d}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
+                        G_TIMER = "{mins}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
 
                     # send info to microservice a
-                    req_str = "W;" + G_TIMER + ";" + SCRAMBLE + ";" + str(time.time())
+                    req_str = "W;" + G_TIMER + ";" + SCRAMBLE + ";" + str(int(time.time())) + "\n"
                     for request in range(1):
-                        socket.send(req_str)
+                        socket.send_string(req_str)
+                        socket.recv()
 
                     # get next scramble
                     PREVIOUS_SCRAMBLE.push(SCRAMBLE)
@@ -236,7 +237,7 @@ def main():
             if mins == 0:
                 G_TIMER = "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
             else:
-                G_TIMER = "{mins:02d}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
+                G_TIMER = "{mins}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
             text_surface = TIMER_FONT.render(G_TIMER, True, FONT_COLOR)
         elif SPACE_HELD:
             mid_time = pygame.time.get_ticks()
