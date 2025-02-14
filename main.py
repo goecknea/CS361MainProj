@@ -1,5 +1,7 @@
 import pygame
 import random
+import time
+import zmq
 
 
 class ScrambleStack:
@@ -48,9 +50,15 @@ def generate_scramble(scr_len):
 
 
 def main():
+    # initialize pygame
     pygame.init()
     main_window = pygame.display.set_mode((1920, 1080))
     pygame.display.set_caption("Rubik's Cube Timer")
+
+    # initialize zmq
+    context = zmq.Context()
+    socket = context.socket(zmq.REQ)
+    socket.connect("tcp://localhost:5555")
 
     ACTIVE_BUTTON_COLOR = pygame.Color(40, 40, 40)
     BKG_COLOR = pygame.Color(20, 20, 20)
@@ -179,6 +187,8 @@ def main():
                 if event.key == pygame.K_SPACE and not TIMER_ACTIVE:
                     SPACE_HELD = True
                     start_time = pygame.time.get_ticks()
+
+                # timer stop
                 if event.key == pygame.K_SPACE and TIMER_ACTIVE:
                     TIMER_ACTIVE = False
                     timer_end = pygame.time.get_ticks()
@@ -190,6 +200,13 @@ def main():
                         G_TIMER = "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
                     else:
                         G_TIMER = "{mins:02d}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
+
+                    # send info to microservice a
+                    req_str = "W;" + G_TIMER + ";" + SCRAMBLE + ";" + str(time.time())
+                    for request in range(1):
+                        socket.send(req_str)
+
+                    # get next scramble
                     PREVIOUS_SCRAMBLE.push(SCRAMBLE)
                     if not NEXT_SCRAMBLES.is_empty():
                         SCRAMBLE = NEXT_SCRAMBLES.pop()
