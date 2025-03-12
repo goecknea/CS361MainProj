@@ -3,6 +3,10 @@ import random
 import time
 import zmq
 
+# init ZMQ for microservice B
+microb_context = zmq.Context()
+microb_socket = microb_context.socket(zmq.REQ)
+microb_socket.connect("tcp://localhost:5556")
 
 class ScrambleStack:
     def __init__(self, max_len):
@@ -31,7 +35,73 @@ class ScrambleStack:
         return True
 
 
+def generate_scramble_display(scramble):
+    microb_socket.send_string(scramble)
+    init_str = microb_socket.recv().decode("utf-8")
+    strlen = len(init_str)
+    init_str = init_str
+
+    # parse response
+    border = 5
+    color = 30
+
+    red = pygame.Color(255, 0, 0)
+    orange = pygame.Color(255, 140, 0)
+    yellow = pygame.Color(255, 255, 0)
+    green = pygame.Color(0, 255, 0)
+    blue = pygame.Color(0, 0, 255)
+    white = pygame.Color(255, 255, 255)
+
+    bkg_border = pygame.Surface(((13 * border) + (12 * color) + border, (10 * border) + (9 * color) + border))
+    bkg_border.fill(pygame.Color(10, 10, 10))
+
+    bkg = pygame.Surface(((13 * border) + (12 * color), (10 * border) + (9 * color)))
+    bkg.fill(pygame.Color(20, 20, 20))
+
+    vert_surf = pygame.Surface(((4 * border) + (3 * color), (10 * border) + (9 * color)))
+    vert_pos = ((3 * border) + (3 * color), 2)
+    vert_surf.fill(pygame.Color(10, 10, 10))
+
+    hor_surf = pygame.Surface(((13 * border) + (12 * color), (4 * border) + (3 * color)))
+    hor_pos = (2, (3 * border) + (3 * color))
+    hor_surf.fill(pygame.Color(10, 10, 10))
+
+    bkg.blit(vert_surf, vert_pos)
+    bkg.blit(hor_surf, hor_pos)
+
+    y_pos = 4
+    index = 0
+
+    for i in range(9):
+        if 2 < i < 6:
+            x_pos = border
+            loop = 12
+        else:
+            x_pos = (4 * border) + (3 * color)
+            loop = 3
+
+        for j in range(loop):
+            surf = pygame.Surface((color, color))
+
+            if init_str[index] == 'w': surf.fill(white)
+            elif init_str[index] == 'r': surf.fill(red)
+            elif init_str[index] == 'g': surf.fill(green)
+            elif init_str[index] == 'b': surf.fill(blue)
+            elif init_str[index] == 'y': surf.fill(yellow)
+            elif init_str[index] == 'o': surf.fill(orange)
+
+            bkg.blit(surf, (x_pos, y_pos))
+            x_pos += border + color
+            index += 1
+
+        y_pos += color + border
+
+    bkg_border.blit(bkg, (border, border))
+
+    return bkg_border
+
 def generate_scramble(scr_len):
+    prev_prev_choice = ""
     prev_choice = ""
     moves = ["U", "F", "R", "D", "B", "L"]
     mods = ["'", "", "2"]
@@ -39,14 +109,37 @@ def generate_scramble(scr_len):
 
     for i in range(scr_len):
         choice = random.choice(moves)
-        while choice == prev_choice:
+        while choice == prev_choice or (choice == prev_prev_choice and
+                                        moves.index(prev_choice) % 3 == moves.index(prev_prev_choice) % 3):
             choice = random.choice(moves)
         mod = random.choice(mods)
 
         scramble += choice + mod + " "
+        prev_prev_choice = prev_choice
         prev_choice = choice
 
     return scramble.strip()
+
+
+def get_help(help_font, font_color, max_scramble):
+    return [help_font.render("Welcome to LBRCT!", True, font_color), help_font.render("LBRCT is an offline Rubik's "
+            "Cube timer that is written in Python using pygame.", True, font_color), help_font.render("To begin using "
+            "LBRCT, use the generated scramble to scramble your Rubik's Cube.", True, font_color),
+            help_font.render("Then, hold Space until the timer turns green, and begin to solve.", True, font_color),
+            help_font.render("When you are finished solving, press space to stop the timer.", True, font_color),
+            help_font.render("This will automatically generate a new scramble, and you can repeat this as many times "
+            "as you want!", True, font_color), help_font.render("You can use the Prev and Next buttons underneath the "
+            "scramble to look at up to " + str(max_scramble) + " previous scrambles.", True, font_color)]
+
+
+def process_time(timer_total):
+    milli = timer_total % 1000
+    secs = (timer_total // 1000) % 60
+    mins = (timer_total // 60000) % 24
+    if mins == 0:
+        return "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
+    else:
+        return "{mins}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
 
 
 def main():
@@ -60,17 +153,22 @@ def main():
     socket = context.socket(zmq.REQ)
     socket.connect("tcp://localhost:5555")
 
+    micro_c_socket = context.socket(zmq.REQ)
+    micro_c_socket.connect("tcp://localhost:5557")
+
     ACTIVE_BUTTON_COLOR = pygame.Color(40, 40, 40)
     BKG_COLOR = pygame.Color(20, 20, 20)
     BUTTON_BORDER_COLOR = pygame.Color(10, 10, 10)
     BUTTON_FONT = pygame.font.Font(None, 36)
     EXIT_BUTTON_ACTIVE = False
+    EXPORT_BUTTON_ACTIVE = False
     FONT_COLOR = pygame.Color(200, 200, 200)
     G_TIMER = "00.000"
     HELP_BUTTON_ACTIVE = False
     HELP_EXIT_BUTTON_ACTIVE = False
     HELP_FONT = pygame.font.Font(None, 54)
     HELP_MENU = False
+    IMPORT_BUTTON_ACTIVE = False
     INFO_FONT = pygame.font.Font(None, 24)
     MAX_SCRAMBLES_SAVED = 5
     MENU_FONT = pygame.font.Font(None, 72)
@@ -81,6 +179,9 @@ def main():
     PREVIOUS_SCRAMBLE = ScrambleStack(MAX_SCRAMBLES_SAVED)
     SCRAMBLE_LENGTH = 20
     SCRAMBLE = generate_scramble(SCRAMBLE_LENGTH)
+    SCRAMBLE_DISPLAY = generate_scramble_display(SCRAMBLE)
+    SCRAMBLE_DISPLAY_ACTIVE = True
+    SCRAMBLE_DISP_BUTTON_ACTIVE = False
     SPACE_HELD = False
     TIMER_ACTIVE = False
     TIMER_DELAY = 500
@@ -98,18 +199,38 @@ def main():
             # handle mouse clicks
             if event.type == pygame.MOUSEBUTTONUP:
                 mx, my = pygame.mouse.get_pos()
+
                 # Prev scramble
                 if PREV_BUTTON_ACTIVE:
                     if not PREVIOUS_SCRAMBLE.is_empty():
                         NEXT_SCRAMBLES.push(SCRAMBLE)
                         SCRAMBLE = PREVIOUS_SCRAMBLE.pop()
+                        SCRAMBLE_DISPLAY = generate_scramble_display(SCRAMBLE)
+
                 # next scramble
                 elif NEXT_BUTTON_ACTIVE:
                     PREVIOUS_SCRAMBLE.push(SCRAMBLE)
                     if not NEXT_SCRAMBLES.is_empty():
                         SCRAMBLE = NEXT_SCRAMBLES.pop()
+                        SCRAMBLE_DISPLAY = generate_scramble_display(SCRAMBLE)
                     else:
                         SCRAMBLE = generate_scramble(SCRAMBLE_LENGTH)
+                        SCRAMBLE_DISPLAY = generate_scramble_display(SCRAMBLE)
+
+                # show/hide scramble display
+                elif SCRAMBLE_DISP_BUTTON_ACTIVE:
+                    SCRAMBLE_DISPLAY_ACTIVE = False if SCRAMBLE_DISPLAY_ACTIVE else True
+
+                # import
+                elif IMPORT_BUTTON_ACTIVE:
+                    micro_c_socket.send_string("import")
+                    micro_c_socket.recv()
+
+                # export
+                elif EXPORT_BUTTON_ACTIVE:
+                    micro_c_socket.send_string("export")
+                    micro_c_socket.recv()
+
                 # help
                 elif HELP_BUTTON_ACTIVE:
                     HELP_MENU = True
@@ -119,22 +240,7 @@ def main():
                         title = MENU_FONT.render("HELP", True, FONT_COLOR)
                         main_window.blit(title, ((WINDOW_CENTER[0] - title.get_rect().w // 2), 25))
 
-                        help_texts = []
-                        help_texts.append(HELP_FONT.render("Welcome to LBRCT!", True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("LBRCT is an offline Rubik's Cube timer that is written"
-                                                           " in Python using pygame.", True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("To begin using LBRCT, use the generated scramble to "
-                                                           "scramble your Rubik's Cube.", True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("Then, hold Space until the timer turns green, "
-                                                           "and begin to solve.", True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("When you are finished solving, press space to stop "
-                                                           "the timer.", True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("This will automatically generate a new scramble, and "
-                                                           "you can repeat this as many times as you want!",
-                                                           True, FONT_COLOR))
-                        help_texts.append(HELP_FONT.render("You can use the Prev and Next buttons underneath the "
-                                                           "scramble to look at up to " + str(MAX_SCRAMBLES_SAVED) +
-                                                           " previous scrambles.", True, FONT_COLOR))
+                        help_texts = get_help(HELP_FONT, FONT_COLOR, MAX_SCRAMBLES_SAVED)
 
                         # render help texts
                         help_text_x = WINDOW_CENTER[0]
@@ -178,6 +284,7 @@ def main():
                             if event.type == pygame.QUIT:
                                 displayLoop = False
                                 HELP_MENU = False
+
                 # exit
                 elif EXIT_BUTTON_ACTIVE:
                     pygame.event.post(pygame.event.Event(pygame.QUIT))
@@ -193,19 +300,15 @@ def main():
                     TIMER_ACTIVE = False
                     timer_end = pygame.time.get_ticks()
                     timer_total = timer_end - timer_start
-                    milli = timer_total % 1000
-                    secs = (timer_total // 1000) % 60
-                    mins = (timer_total // 60000) % 24
-                    if mins == 0:
-                        G_TIMER = "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
-                    else:
-                        G_TIMER = "{mins}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
+                    G_TIMER = process_time(timer_total)
 
                     # send info to microservice a
                     req_str = "W;" + G_TIMER + ";" + SCRAMBLE + ";" + str(int(time.time())) + "\n"
                     for request in range(1):
                         socket.send_string(req_str)
-                        socket.recv()
+                        resp = socket.recv()
+                        if resp[:5] == "error":
+                            print("unable to save scramble")
 
                     # get next scramble
                     PREVIOUS_SCRAMBLE.push(SCRAMBLE)
@@ -213,6 +316,7 @@ def main():
                         SCRAMBLE = NEXT_SCRAMBLES.pop()
                     else:
                         SCRAMBLE = generate_scramble(SCRAMBLE_LENGTH)
+                        SCRAMBLE_DISPLAY = generate_scramble_display(SCRAMBLE)
 
             # if space released and the time held < TIMER_DELAY, timer does not start
             if event.type == pygame.KEYUP:
@@ -231,13 +335,7 @@ def main():
         elif not SPACE_HELD and TIMER_ACTIVE:
             mid = pygame.time.get_ticks()
             mid_time = mid - timer_start
-            milli = mid_time % 1000
-            secs = (mid_time // 1000) % 60
-            mins = (mid_time // 60000) % 24
-            if mins == 0:
-                G_TIMER = "{secs:02d}.{milli:03d}".format(secs=secs, milli=milli)
-            else:
-                G_TIMER = "{mins}:{secs:02d}.{milli:03d}".format(mins=mins, secs=secs, milli=milli)
+            G_TIMER = process_time(mid_time)
             text_surface = TIMER_FONT.render(G_TIMER, True, FONT_COLOR)
         elif SPACE_HELD:
             mid_time = pygame.time.get_ticks()
@@ -257,7 +355,7 @@ def main():
         # menu button
         menu_text_surface = MENU_FONT.render("MENU", True, FONT_COLOR)
 
-        menu_surface = pygame.Surface((menu_text_surface.get_rect().w + 20, menu_text_surface.get_rect().h + 20))
+        menu_surface = pygame.Surface((menu_text_surface.get_rect().w + 75, menu_text_surface.get_rect().h + 20))
         if (15 <= mouse_x <= 15 + menu_surface.get_rect().w) and (15 <= mouse_y <= 15 + menu_surface.get_rect().h):
             menu_surface.fill(ACTIVE_BUTTON_COLOR)
             MENU_OPEN = True
@@ -266,13 +364,53 @@ def main():
         menu_bkg_surface = pygame.Surface((menu_surface.get_rect().w + 4, menu_surface.get_rect().h + 4))
         menu_bkg_surface.fill(BUTTON_BORDER_COLOR)
 
-        menu_surface.blit(menu_text_surface, (10, 10))
+        menu_surface.blit(menu_text_surface, (37.5, 10))
         menu_bkg_surface.blit(menu_surface, (2, 2))
         main_window.blit(menu_bkg_surface, (15, 15))
 
         # menu button size as var for all menu buttons
         menu_surf_size = (menu_surface.get_rect().w, menu_surface.get_rect().h)
         menu_bkg_size = (menu_bkg_surface.get_rect().w, menu_bkg_surface.get_rect().h)
+
+        # import button
+        imp_txt_surf = MENU_FONT.render("IMPORT", True, FONT_COLOR)
+        imp_surf = pygame.Surface(menu_surf_size)
+        imp_border = pygame.Surface(menu_bkg_size)
+        imp_border.fill(BUTTON_BORDER_COLOR)
+
+        imp_x = 15
+        imp_y = 15 + menu_bkg_size[1] - 2  # (bkg.h - 2) * x for x button below menu
+
+        if (imp_x <= mouse_x <= imp_x + menu_surf_size[0]) and (imp_y <= mouse_y <= imp_y + menu_surf_size[1]):
+            imp_surf.fill(ACTIVE_BUTTON_COLOR)
+            IMPORT_BUTTON_ACTIVE = True
+        else:
+            imp_surf.fill(BKG_COLOR)
+            IMPORT_BUTTON_ACTIVE = False
+
+        imp_surf.blit(imp_txt_surf, ((menu_surf_size[0] // 2) - (imp_txt_surf.get_rect().w // 2), (
+                menu_surf_size[1] // 2) - (imp_txt_surf.get_rect().h // 2)))
+        imp_border.blit(imp_surf, (2, 2))
+
+        # export button
+        exp_txt_surf = MENU_FONT.render("EXPORT", True, FONT_COLOR)
+        exp_surf = pygame.Surface(menu_surf_size)
+        exp_border = pygame.Surface(menu_bkg_size)
+        exp_border.fill(BUTTON_BORDER_COLOR)
+
+        exp_x = 15
+        exp_y = 15 + (2 * (menu_bkg_size[1] - 2))  # (bkg.h - 2) * x for x button below menu
+
+        if (exp_x <= mouse_x <= exp_x + menu_surf_size[0]) and (exp_y <= mouse_y <= exp_y + menu_surf_size[1]):
+            exp_surf.fill(ACTIVE_BUTTON_COLOR)
+            EXPORT_BUTTON_ACTIVE = True
+        else:
+            exp_surf.fill(BKG_COLOR)
+            EXPORT_BUTTON_ACTIVE = False
+
+        exp_surf.blit(exp_txt_surf, ((menu_surf_size[0] // 2) - (exp_txt_surf.get_rect().w // 2), (
+                menu_surf_size[1] // 2) - (exp_txt_surf.get_rect().h // 2)))
+        exp_border.blit(exp_surf, (2, 2))
 
         # help button
         help_txt_surf = MENU_FONT.render("HELP", True, FONT_COLOR)
@@ -281,7 +419,7 @@ def main():
         help_border.fill(BUTTON_BORDER_COLOR)
 
         help_x = 15
-        help_y = 15 - 2 + menu_bkg_size[1]  # (bkg.h - 2) * x for x button below menu
+        help_y = 15 + (3 * (menu_bkg_size[1] - 2))   # (bkg.h - 2) * x for x button below menu
 
         if (help_x <= mouse_x <= help_x + menu_surf_size[0]) and (help_y <= mouse_y <= help_y + menu_surf_size[1]):
             help_surf.fill(ACTIVE_BUTTON_COLOR)
@@ -301,7 +439,7 @@ def main():
         exit_border.fill(BUTTON_BORDER_COLOR)
 
         exit_x = 15
-        exit_y = 15 + (2 * (-2 + menu_bkg_size[1]))  # (bkg.h - 2) * x for x button below menu
+        exit_y = 15 + (4 * (menu_bkg_size[1] - 2))  # (bkg.h - 2) * x for x button below menu
 
         if (exit_x <= mouse_x <= exit_x + menu_surf_size[0]) and (exit_y <= mouse_y <= exit_y + menu_surf_size[1]):
             exit_surf.fill(ACTIVE_BUTTON_COLOR)
@@ -316,6 +454,8 @@ def main():
 
         # display menu
         if MENU_OPEN:
+            main_window.blit(imp_border, (imp_x, imp_y))
+            main_window.blit(exp_border, (exp_x, exp_y))
             main_window.blit(help_border, (help_x, help_y))
             main_window.blit(exit_border, (exit_x, exit_y))
 
@@ -390,6 +530,40 @@ def main():
             info_text = INFO_FONT.render("Stores up to 5 scrambles to navigate through", True, FONT_COLOR,
                                          pygame.Color(75, 75, 75))
             main_window.blit(info_text, (mouse_x, mouse_y - info_text.get_rect().h))
+
+        # show/hide button
+        if SCRAMBLE_DISPLAY_ACTIVE:
+            b_font = BUTTON_FONT.render("hide", True, FONT_COLOR)
+        else:
+            b_font = BUTTON_FONT.render("show", True, FONT_COLOR)
+        b_button = pygame.Surface((b_font.get_rect().w + 2, b_font.get_rect().h + 2))
+        b_bkg = pygame.Surface((b_button.get_rect().w + 10, b_font.get_rect().h + 10))
+        b_bkg.fill(BUTTON_BORDER_COLOR)
+
+        # blit scramble display
+        scr_disp = (1920 - SCRAMBLE_DISPLAY.get_rect().w, 1080 - SCRAMBLE_DISPLAY.get_rect().h)
+
+        if SCRAMBLE_DISPLAY_ACTIVE:
+            b_pos = (scr_disp[0], scr_disp[1] - b_bkg.get_rect().h + 5)
+
+            # scramble
+            main_window.blit(SCRAMBLE_DISPLAY, scr_disp)
+        else:
+            b_pos = (scr_disp[0], 1080 - b_bkg.get_rect().h)
+
+        # check button active
+        if (b_pos[0] <= mouse_x <= b_pos[0] + b_bkg.get_rect().w) and (
+                b_pos[1] <= mouse_y <= b_pos[1] + b_bkg.get_rect().h):
+            SCRAMBLE_DISP_BUTTON_ACTIVE = True
+            b_button.fill(ACTIVE_BUTTON_COLOR)
+        else:
+            SCRAMBLE_DISP_BUTTON_ACTIVE = False
+            b_button.fill(BKG_COLOR)
+
+        # blit show/hide button
+        b_button.blit(b_font, (1, 1))
+        b_bkg.blit(b_button, (5, 5))
+        main_window.blit(b_bkg, b_pos)
 
         # update display
         pygame.display.flip()
